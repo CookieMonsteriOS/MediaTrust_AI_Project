@@ -172,7 +172,7 @@ def summarise_text(row, max_tokens=512):
         })
 
     except Exception as e:
-        print(f"Error summarizing row: {e}")
+        print(f"Error summarising row: {e}")
         return pd.Series({
             'summary': 'Summary unavailable',
             'bias_score': 'unknown',
@@ -191,7 +191,6 @@ def main():
     bias_df = add_bias_annotation(sentiment_df)
     extremity_df = set_article_extremity(bias_df)
     final_df = add_article_summaries(extremity_df)
-    
-    
+
 if __name__ == "__main__":
     main()
