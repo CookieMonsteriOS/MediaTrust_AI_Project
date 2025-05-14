@@ -2,7 +2,7 @@
 
 **AI-powered news analyzer that detects political bias, sentiment, and ideological extremity from live news articles. Built with Python, Pandas, Hugging Face Transformers, and Gradio.**
 
-# Live Demo
+## Live Demo
 
 [![Hugging Face](https://img.shields.io/badge/View%20on%20Hugging%20Face-ModelForge%2Fmedia--trust--analyser-blue?logo=huggingface)](https://huggingface.co/spaces/ModelForge/media-trust-analyser)
 
