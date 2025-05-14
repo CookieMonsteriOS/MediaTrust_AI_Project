@@ -69,7 +69,7 @@ Follow these steps to run the app locally:
 5. Access the Gradio interface
    Running on local URL: http://127.0.0.1:7860/
 
-[![Hugging Face Spaces](https://img.shields.io/badge/🤗%20View%20on%20Hugging%20Face-ModelForge%2Fmedia--trust--analyser-blue?logo=huggingface&style=for-the-badge)](https://huggingface.co/spaces/ModelForge/media-trust-analyser)
+[![Demo on Hugging Face](https://img.shields.io/badge/Demo-Hugging%20Face-blue?logo=huggingface)](https://huggingface.co/spaces/ModelForge/media-trust-analyser)
 
  
 
