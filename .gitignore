@@ -1,18 +1,27 @@
-venv/
-
-.env
-
+# Python bytecode
 __pycache__/
 *.pyc
 *.pyo
+*.pyd
 
+# Virtual environment
+venv/
+.env/
+
+# IDE-specific files
 .vscode/
 .idea/
 
+# Jupyter notebook checkpoints
 .ipynb_checkpoints/
 
+# OS-specific files (e.g., macOS)
 .DS_Store
-Thumbs.db
 
-*.bin
-*.h5
+# Logs
+*.log
+*.out
+*.err
+
+# Environment variables
+.env
