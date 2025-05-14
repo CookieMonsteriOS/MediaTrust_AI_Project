@@ -12,6 +12,7 @@ summarizer = pipeline("summarization", model="sshleifer/distilbart-cnn-12-6")
 
 from dotenv import load_dotenv
 import os
+from concurrent.futures import ThreadPoolExecutor
 
 load_dotenv()
 
@@ -53,45 +54,52 @@ BIAS_SCORE_MAP = {
     "unknown": 0
 }
 
-def query(query, sort_by="popularity", max_tokens=100):
+def query(topic, sort_by="popularity", max_tokens=100):
+    if not topic:
+        print("Topic must be provided.")
+        return None
 
-    if query == "":
-        print("Topic needs to be passed in")
-        return
-    
     today = datetime.today()
-    seven_days_ago = today - timedelta(days=20)
-    from_date = seven_days_ago.strftime('%Y-%m-%d')
+    last_week = today - timedelta(days=7)
+    from_date = last_week.strftime('%Y-%m-%d')
     to_date = today.strftime('%Y-%m-%d')
-    
+
     base_url = "https://newsapi.org/v2/everything"
-    url = f"{base_url}?q={query}&from={from_date}&to={to_date}&sortBy={sort_by}&apiKey={api_key}"
-    news = None
+    url = (
+        f"{base_url}?q={topic}&from={from_date}&to={to_date}"
+        f"&sortBy={sort_by}&pageSize=10&apiKey={api_key}"
+    )
 
     try:
-        news_response = requests.get(url, timeout=10)
-        if news_response.status_code == 200:
-            news = news_response.json()
+        response = requests.get(url, timeout=10)
+        if response.status_code != 200:
+            print(f"API returned error: {response.status_code}")
+            return None
 
-        else:
-            print("API error has occured", news_response.status_code)
-    except Exception:
-        print('An exception occurred')
+        data = response.json()
 
-    article_arr = news["articles"]
-    extracted_data = []
+        if data.get("totalResults", 0) == 0:
+            print("No articles found for the given query and date range.")
+            return None
 
-    for article in article_arr:
-        extracted_data.append({
-            "title": article.get("title", "N/A"),
-            "description": article.get("description", "N/A"),
-            "source_name": article.get("source", {}).get("name", "N/A"),
-            "url": article.get("url", "N/A"),
-            "publishedAt": article.get("publishedAt", "N/A")
-        })
+        articles = data.get("articles", [])
+        extracted = [
+            {
+                "title": article.get("title", "N/A"),
+                "description": article.get("description", "N/A"),
+                "source_name": article.get("source", {}).get("name", "N/A"),
+                "url": article.get("url", "N/A"),
+                "publishedAt": article.get("publishedAt", "N/A"),
+            }
+            for article in articles
+        ]
 
-    df = pd.DataFrame(extracted_data)
-    return df
+        return pd.DataFrame(extracted)
+
+    except Exception as e:
+        print(f"An error occurred: {e}")
+        return None
+
 
 
 def process_data(df):
@@ -103,15 +111,14 @@ def process_data(df):
     return df_cleaned
 
 def analyse_sentiment(df):
-    
     analyser = SentimentIntensityAnalyzer()
-    
+
     df['compound'] = [analyser.polarity_scores(x)['compound'] for x in df['text']]
     df['neg'] = [analyser.polarity_scores(x)['neg'] for x in df['text']]
     df['neu'] = [analyser.polarity_scores(x)['neu'] for x in df['text']]
     df['pos'] = [analyser.polarity_scores(x)['pos'] for x in df['text']]
-    
-    def label_sentiment(score):
+
+    def label(score):
         if score >= 0.05:
             return "positive"
         elif score <= -0.05:
@@ -119,15 +126,16 @@ def analyse_sentiment(df):
         else:
             return "neutral"
 
-    df['sentiment_label'] = df['compound'].apply(label_sentiment)
+    df['sentiment_label'] = df['compound'].apply(label)
     return df
 
 def get_bias_label(source_name):
-        source = source_name.strip().lower()
-        return SOURCE_BIAS_MAP.get(source, "unknown")
+    source = source_name.strip().lower()
+    return SOURCE_BIAS_MAP.get(source, "unknown")
 
 def add_bias_annotation(df):
-    df['bias_label'] = df['source_name'].apply(get_bias_label)
+    bias_series = pd.Series(SOURCE_BIAS_MAP)
+    df['bias_label'] = df['source_name'].str.strip().str.lower().map(bias_series).fillna("unknown")
     return df
 
 def set_article_extremity(df, top_n=5):
@@ -153,31 +161,18 @@ def summarise_text(row, max_tokens=512):
         source_name = row['source_name'] if 'source_name' in row and pd.notna(row['source_name']) else 'unknown'
 
         input_length = len(text.split())
-
-        if input_length < 40:
-            max_length = max(10, int(input_length / 2))
-        else:
-            max_length = min(input_length - 10, max_tokens)
+        max_length = min(input_length - 10, max_tokens)
         min_length = max(10, max_length - 10)
 
         summary = summarizer(text, max_length=max_length, min_length=min_length, do_sample=False)
         summary_text = summary[0]['summary_text']
-
         bias_label = get_bias_label(source_name)
 
-        return pd.Series({
-            'summary': summary_text,
-            'bias_score': bias_label,
-            'source': source_name
-        })
+        return pd.Series({'summary': summary_text, 'bias_score': bias_label, 'source': source_name})
 
     except Exception as e:
         print(f"Error summarising row: {e}")
-        return pd.Series({
-            'summary': 'Summary unavailable',
-            'bias_score': 'unknown',
-            'source': 'unknown'
-        })
+        return pd.Series({'summary': 'Summary unavailable', 'bias_score': 'unknown', 'source': 'unknown'})
 
 def add_article_summaries(df, max_tokens=512):
     summary_df = df.apply(summarise_text, axis=1, max_tokens=max_tokens)
@@ -186,11 +181,17 @@ def add_article_summaries(df, max_tokens=512):
 
 def main():
     raw_df = query("Tesla")
+    if raw_df is None or raw_df.empty:
+        print("No data found!")
+        return
+
     processed_df = process_data(raw_df)
-    sentiment_df = analyse_sentiment(processed_df)
+    analyser = SentimentIntensityAnalyzer()
+    sentiment_df = analyse_sentiment(processed_df, analyser)
     bias_df = add_bias_annotation(sentiment_df)
     extremity_df = set_article_extremity(bias_df)
     final_df = add_article_summaries(extremity_df)
+    print(final_df.head())
 
 if __name__ == "__main__":
     main()
