@@ -5,10 +5,15 @@ import datetime
 import nltk
 from datetime import datetime, timedelta
 from nltk.sentiment.vader import SentimentIntensityAnalyzer
-nltk.download('vader_lexicon')
+
+try:
+    nltk.data.find('sentiment/vader_lexicon')
+except LookupError:
+    nltk.download('vader_lexicon')
 
 from transformers import pipeline
 summarizer = pipeline("summarization", model="sshleifer/distilbart-cnn-12-6")
+from concurrent.futures import ThreadPoolExecutor
 
 from dotenv import load_dotenv
 import os
@@ -103,6 +108,10 @@ def query(topic, sort_by="popularity", max_tokens=100):
 
 
 def process_data(df):
+    if df is None or df.empty or not all(col in df.columns for col in ["title", "description"]):
+        print("Invalid or empty DataFrame passed to process_data()")
+        return pd.DataFrame()  
+
     df_cleaned = df.dropna(subset=["title", "description"])
     df_cleaned = df_cleaned[df_cleaned["title"].str.strip() != ""]
     df_cleaned = df_cleaned[df_cleaned["description"].str.strip() != ""]
@@ -110,15 +119,20 @@ def process_data(df):
     df_cleaned["text"] = df_cleaned["title"] + df_cleaned["description"].str.lower()
     return df_cleaned
 
+
 def analyse_sentiment(df):
     analyser = SentimentIntensityAnalyzer()
 
-    df['compound'] = [analyser.polarity_scores(x)['compound'] for x in df['text']]
-    df['neg'] = [analyser.polarity_scores(x)['neg'] for x in df['text']]
-    df['neu'] = [analyser.polarity_scores(x)['neu'] for x in df['text']]
-    df['pos'] = [analyser.polarity_scores(x)['pos'] for x in df['text']]
+    def get_scores(text):
+        scores = analyser.polarity_scores(text)
+        return scores['compound'], scores['neg'], scores['neu'], scores['pos']
 
-    def label(score):
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        results = list(executor.map(get_scores, df['text']))
+
+    df[['compound', 'neg', 'neu', 'pos']] = results
+
+    def label_sentiment(score):
         if score >= 0.05:
             return "positive"
         elif score <= -0.05:
@@ -126,7 +140,7 @@ def analyse_sentiment(df):
         else:
             return "neutral"
 
-    df['sentiment_label'] = df['compound'].apply(label)
+    df['sentiment_label'] = df['compound'].apply(label_sentiment)
     return df
 
 def get_bias_label(source_name):
@@ -175,7 +189,10 @@ def summarise_text(row, max_tokens=512):
         return pd.Series({'summary': 'Summary unavailable', 'bias_score': 'unknown', 'source': 'unknown'})
 
 def add_article_summaries(df, max_tokens=512):
-    summary_df = df.apply(summarise_text, axis=1, max_tokens=max_tokens)
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        summaries = list(executor.map(lambda row: summarise_text(row, max_tokens), df.to_dict('records')))
+    
+    summary_df = pd.DataFrame(summaries)
     df[['summary', 'bias_score', 'source']] = summary_df
     return df
 
